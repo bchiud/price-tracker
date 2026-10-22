@@ -160,6 +160,8 @@ def check_now(conn: sqlite3.Connection, fetch: Fetcher, notify: Notifier, channe
     results = check_all(conn, fetch, notify, channel_id)
     if not results:
         return _NOTHING_TRACKED
+    # Checked stalest-first; report in the order /list shows.
+    results.sort(key=lambda r: (r.product.channel_id, r.product.number))
     return _fit([_result_line(r) for r in results], keep=0)
 
 

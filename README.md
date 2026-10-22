@@ -109,6 +109,8 @@ Example: a Shopify store whose Sales Genius discount app draws the sale price:
 - **Without a target:** when the price drops below the previous check. The first check only records a baseline. It never alerts twice for the same or a higher price, and it re-arms once the price climbs back above the last alerted price.
 - **If an alert fails to post** (Discord down, or the bot can't post in the channel), the price isn't recorded, so the next check retries the alert.
 
+**Check order.** Each check goes least recently checked first; never-checked products go first of all. So a check that's cut short (the Mac sleeps, the bot restarts) starts the next one with the products it missed, instead of repeating the same ones. `/check` still lists results by ID.
+
 **Avoiding bot blocks.** There's no guarantee, but the tracker keeps a low profile:
 - **Low volume:** one request per product per check, one at a time.
 - **Chrome fingerprint:** plain fetches imitate Chrome, and the browser is only used when needed.

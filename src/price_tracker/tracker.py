@@ -216,10 +216,10 @@ def check_all(
     channel_id: int | None = None,
     pacer: Pacer | None = None,
 ) -> list[CheckResult]:
-    """Check every product, or only one channel's when `channel_id` is given."""
+    """Check every product, or only one channel's when `channel_id` is given. Least recently checked go first."""
     pacer = pacer or Pacer()
     results = []
-    for product in db.list_products(conn, channel_id):
+    for product in db.products_to_check(conn, channel_id):
         if product.skips_left > 0:
             db.use_skip(conn, product.id)
             results.append(CheckResult(product, skipped=True))

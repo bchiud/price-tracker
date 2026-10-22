@@ -146,6 +146,32 @@ def test_one_failing_product_does_not_stop_others(conn: sqlite3.Connection, noti
     assert len(db.price_history(conn, good)) == 1
 
 
+def test_check_all_checks_least_recently_checked_first(conn: sqlite3.Connection, notify: Recorder) -> None:
+    # A run cut short (sleep, restart) must not starve the same products every time.
+    class Killed(BaseException):  # not an Exception, so check_product doesn't swallow it
+        pass
+
+    db.add_product(conn, 1, "https://shop/1")
+    db.add_product(conn, 1, "https://shop/2")
+    fetched: list[str] = []
+    kill = True
+
+    def fetch(url: str, **_: object) -> str:
+        nonlocal kill
+        fetched.append(url)
+        if url == "https://shop/2" and kill:
+            kill = False
+            raise Killed  # the first run dies after checking #1
+        return _page("10")
+
+    with pytest.raises(Killed):
+        check_all(conn, fetch, notify)
+    fetched.clear()
+    results = check_all(conn, fetch, notify)
+    assert fetched == ["https://shop/2", "https://shop/1"]
+    assert [r.product.number for r in results] == [2, 1]
+
+
 def test_missing_price_is_an_error(conn: sqlite3.Connection, notify: Recorder) -> None:
     pid = db.add_product(conn, 1, URL).id
     [result] = check_all(conn, lambda url, **_: "<html>no price</html>", notify)

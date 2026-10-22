@@ -182,6 +182,23 @@ def list_products(conn: sqlite3.Connection, channel_id: int | None = None) -> li
     return [_to_product(row) for row in rows]
 
 
+def products_to_check(conn: sqlite3.Connection, channel_id: int | None = None) -> list[Product]:
+    """Like list_products, but least recently checked first (never-checked first of all), so a run that's cut short
+    (sleep, restart) doesn't starve the same products every time. last_checked_at is UTC isoformat() text, which
+    sorts chronologically."""
+    if channel_id is None:
+        rows = conn.execute(
+            "SELECT * FROM products WHERE untracked_at IS NULL ORDER BY last_checked_at NULLS FIRST, id"
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """SELECT * FROM products WHERE channel_id = ? AND untracked_at IS NULL
+               ORDER BY last_checked_at NULLS FIRST, id""",
+            (channel_id,),
+        ).fetchall()
+    return [_to_product(row) for row in rows]
+
+
 def get_product(conn: sqlite3.Connection, product_id: int) -> Product | None:
     """By internal id, tracked or not."""
     row = conn.execute("SELECT * FROM products WHERE id = ?", (product_id,)).fetchone()

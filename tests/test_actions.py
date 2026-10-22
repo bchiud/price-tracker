@@ -141,6 +141,7 @@ def test_check_now_summarises_each_product(conn: sqlite3.Connection) -> None:
     actions.check_now(conn, fetch, sent.append, A)
     price = "15"
     lines = actions.check_now(conn, fetch, sent.append, A).splitlines()
+    # Bad was never checked successfully, so it's checked first, but lines stay in /list order.
     assert lines[0] == "📉 #1 Good: 15.00"
     assert lines[1].startswith("❌ #2 Bad: fetch failed")
 
@@ -159,7 +160,7 @@ def test_check_now_only_checks_own_channel(conn: sqlite3.Connection) -> None:
 
     fetched.clear()
     actions.check_now(conn, fetch, _no_notify, None)  # scheduled check: every channel
-    assert fetched == ["https://shop/a", "https://shop/b"]
+    assert fetched == ["https://shop/b", "https://shop/a"]  # b was never checked, so it goes first
 
 
 def test_long_list_fits_discord_limit_and_keeps_code_block(conn: sqlite3.Connection) -> None:

@@ -170,6 +170,26 @@ def test_queries_scope_to_channel(conn: sqlite3.Connection) -> None:
     assert db.find_product(conn, 1, 2) is None  # channel 2's product isn't reachable from channel 1
 
 
+def test_products_to_check_puts_least_recently_checked_first(conn: sqlite3.Connection) -> None:
+    fresh = db.add_product(conn, 1, "https://shop/fresh").id
+    stale = db.add_product(conn, 1, "https://shop/stale").id
+    never = db.add_product(conn, 1, "https://shop/never").id
+    gone = db.add_product(conn, 1, "https://shop/gone").id
+    other = db.add_product(conn, 2, "https://shop/other").id
+    checked = [
+        (fresh, "2026-10-22T12:00:00+00:00"),
+        (stale, "2026-10-21T12:00:00.500000+00:00"),
+        (other, "2026-10-23T12:00:00+00:00"),
+    ]
+    for pid, at in checked:
+        conn.execute("UPDATE products SET last_checked_at = ? WHERE id = ?", (at, pid))
+    db.untrack_product(conn, gone)
+
+    assert [p.id for p in db.products_to_check(conn, 1)] == [never, stale, fresh]
+    assert [p.id for p in db.products_to_check(conn)] == [never, stale, fresh, other]  # None = every channel
+    assert [p.id for p in db.list_products(conn, 1)] == [fresh, stale, never]  # /list keeps number order
+
+
 def test_numbers_are_per_channel_and_stable(conn: sqlite3.Connection) -> None:
     numbers = [db.add_product(conn, ch, f"https://shop/{ch}/{i}").number for ch, i in [(1, 1), (2, 1), (1, 2), (1, 3)]]
     assert numbers == [1, 1, 2, 3]
