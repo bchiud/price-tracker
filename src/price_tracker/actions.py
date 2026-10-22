@@ -42,16 +42,23 @@ def track(
             "URL can't contain spaces. Put only the link in `url`, and pick `render`, `selector`, etc. "
             "as separate options (click them above the message box, or press Tab after the URL)."
         )
-    try:
-        product = db.add_product(conn, channel_id, url, name, target, selector, render)
-    except sqlite3.IntegrityError:
-        return f"Already tracking <{url}> in this channel"
+    restored = False
+    if untracked := db.find_untracked(conn, channel_id, url):
+        product = db.restore_product(conn, untracked.id, name, target, selector, render)
+        restored = True
+    else:
+        try:
+            product = db.add_product(conn, channel_id, url, name, target, selector, render)
+        except sqlite3.IntegrityError:
+            return f"Already tracking <{url}> in this channel"
 
     # Check right away so a bad URL/selector surfaces now, and the first price becomes the baseline.
     result = check_product(conn, product, fetch, notify)
     # Re-read: the check may have filled in the page's product name.
     product = db.get_product(conn, product.id) or product
     header = f"Tracking #{product.number}: {product.label}"
+    if restored:
+        header += " (tracked before; its ID and price history are back)"
     if result.price is None:
         return (
             f"{header}\n⚠️ Couldn't read a price yet ({result.error}). "
@@ -79,8 +86,10 @@ def untrack(conn: sqlite3.Connection, channel_id: int, number: int) -> str:
     product = db.find_product(conn, channel_id, number)
     if product is None:
         return _no_product(number)
-    db.remove_product(conn, product.id)
-    return f"Stopped tracking #{number}: {product.label}"
+    db.untrack_product(conn, product.id)
+    return (
+        f"Stopped tracking #{number}: {product.label}\n-# Its price history is kept; `/track` the same URL to resume."
+    )
 
 
 def history(conn: sqlite3.Connection, channel_id: int, number: int, limit: int = 20) -> str:

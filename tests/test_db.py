@@ -38,15 +38,37 @@ def test_record_price_tracks_lowest_and_history(conn: sqlite3.Connection) -> Non
     assert [p for p, _ in db.price_history(conn, pid)] == [Decimal("50"), Decimal("40"), Decimal("45")]
 
 
-def test_remove_cascades_history(conn: sqlite3.Connection) -> None:
-    pid = db.add_product(conn, 1, "https://shop/x").id
-    product = db.get_product(conn, pid)
-    assert product is not None
+def test_untrack_is_a_soft_delete(conn: sqlite3.Connection) -> None:
+    product = db.add_product(conn, 1, "https://shop/x")
     db.record_price(conn, product, Decimal("10"), None)
 
-    assert db.remove_product(conn, pid) is True
-    assert db.remove_product(conn, pid) is False
-    assert conn.execute("SELECT COUNT(*) FROM price_history").fetchone()[0] == 0
+    assert db.untrack_product(conn, product.id) is True
+    assert db.untrack_product(conn, product.id) is False  # already untracked
+    assert db.list_products(conn) == [] and db.list_products(conn, 1) == []
+    assert db.find_product(conn, 1, product.number) is None
+    assert db.get_product(conn, product.id) is not None  # the row is still there...
+    assert [p for p, _ in db.price_history(conn, product.id)] == [Decimal("10")]  # ...with its history
+    assert db.find_untracked(conn, 1, "https://shop/x") is not None
+    assert db.find_untracked(conn, 2, "https://shop/x") is None
+
+
+def test_restore_keeps_number_and_history_and_merges_options(conn: sqlite3.Connection) -> None:
+    product = db.add_product(conn, 1, "https://shop/x", name="Old", target_price=Decimal("50"), selector=".p")
+    db.record_price(conn, product, Decimal("60"), last_notified_price=Decimal("60"))
+    conn.execute("UPDATE products SET render = 1, blocked_streak = 2, skips_left = 1")
+    db.untrack_product(conn, product.id)
+
+    restored = db.restore_product(conn, product.id, target_price=Decimal("40"))
+    assert (restored.id, restored.number) == (product.id, product.number)
+    assert (restored.name, restored.target_price, restored.selector, restored.render) == (
+        "Old",
+        Decimal("40"),
+        ".p",
+        True,
+    )
+    assert (restored.last_notified_price, restored.blocked_streak, restored.skips_left) == (None, 0, 0)
+    assert restored.last_price == Decimal("60")
+    assert [p.id for p in db.list_products(conn, 1)] == [product.id]
 
 
 def test_data_persists_across_connections(tmp_path: Path) -> None:
@@ -99,7 +121,8 @@ def test_channel_migration_drops_unattributable_products(tmp_path: Path) -> None
     product = db.get_product(conn, pid)
     assert product is not None
     db.record_price(conn, product, Decimal("10"), None)
-    db.remove_product(conn, pid)
+    with conn:
+        conn.execute("DELETE FROM products WHERE id = ?", (pid,))
     assert conn.execute("SELECT COUNT(*) FROM price_history").fetchone()[0] == 0
     conn.close()
 
@@ -151,9 +174,12 @@ def test_numbers_are_per_channel_and_stable(conn: sqlite3.Connection) -> None:
     numbers = [db.add_product(conn, ch, f"https://shop/{ch}/{i}").number for ch, i in [(1, 1), (2, 1), (1, 2), (1, 3)]]
     assert numbers == [1, 1, 2, 3]
 
-    db.remove_product(conn, db.find_product(conn, 1, 2).id)  # type: ignore[union-attr]
+    db.untrack_product(conn, db.find_product(conn, 1, 2).id)  # type: ignore[union-attr]
     assert [p.number for p in db.list_products(conn, 1)] == [1, 3]  # no renumbering
     assert db.add_product(conn, 1, "https://shop/1/4").number == 4
+
+    db.untrack_product(conn, db.find_product(conn, 1, 4).id)  # type: ignore[union-attr]
+    assert db.add_product(conn, 1, "https://shop/1/5").number == 5  # untracked numbers are never reused
 
     with pytest.raises(sqlite3.IntegrityError):  # (channel_id, number) is unique
         conn.execute("UPDATE products SET number = 1 WHERE channel_id = 1 AND number = 3")
@@ -176,4 +202,11 @@ def test_number_migration_backfills_in_creation_order(tmp_path: Path) -> None:
     assert [(p.url, p.number) for p in db.list_products(conn, 10)] == [("a", 1), ("c", 2), ("e", 3)]
     assert [(p.url, p.number) for p in db.list_products(conn, 20)] == [("b", 1), ("d", 2)]
     assert db.add_product(conn, 10, "f").number == 4
+    conn.close()
+
+
+def test_soft_delete_migration_adds_untracked_at(tmp_path: Path) -> None:
+    conn = db.connect(tmp_path / "t.db")
+    columns = {row["name"]: row for row in conn.execute("PRAGMA table_info(products)")}
+    assert "untracked_at" in columns and columns["untracked_at"]["dflt_value"] is None
     conn.close()

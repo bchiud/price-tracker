@@ -28,10 +28,15 @@ All commands are **owner-only**: only the account that owns the bot application 
 | `/list` | This channel's products as a table (ID, store, name, now, low, target, last checked) |
 | `/history id` | Store and product link (`Acme: Deluxe Widget`), then the last 20 prices |
 | `/target id [price]` | Set the target: an amount (`150`) or a percentage below the current price (`-20%`). Leave `price` empty to clear it |
-| `/untrack id` | Stop tracking (also deletes its history) |
+| `/untrack id` | Stop tracking. Its price history is kept, and `/track`ing the same URL in the channel restores it |
 | `/check` | Check this channel's products now |
 
-**IDs are per channel:** each channel numbers its products 1, 2, 3… in the order they were tracked. A product keeps its number when others are removed, so `/untrack 2` never hits a product that moved. (Only the highest number can be reused, after it's removed and something new is tracked.)
+**IDs are per channel:** each channel numbers its products 1, 2, 3… in the order they were tracked. A product keeps its number when others are removed, so `/untrack 2` never hits a product that moved. Numbers are never reused.
+
+**Untracking is a soft delete.** The product disappears from every command and from checks, but its row, ID and price history stay. `/track` the same URL in that channel to restore it:
+- it gets its old ID and history back;
+- options you give replace the old ones, and options you leave out keep their previous values;
+- its alert state starts fresh.
 
 **Store** is the site's name from the URL's domain, without `www.` and the ending (`.com`, `.co.uk`, …), in title case. For example, `www.williams-sonoma.com` shows as `Williams-Sonoma`.
 

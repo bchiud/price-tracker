@@ -96,7 +96,7 @@ def test_commands_are_scoped_to_the_invoking_channel(tmp_path: Path) -> None:
     # Each channel has its own #1.
     assert "Alpha" in _call(bot, "history", 111, number=1)
     assert _call(bot, "untrack", 111, number=2) == "No product #2 in this channel"
-    assert _call(bot, "untrack", 222, number=1) == "Stopped tracking #1: Bravo"
+    assert _call(bot, "untrack", 222, number=1).startswith("Stopped tracking #1: Bravo\n")
     assert "Alpha" in _call(bot, "list", 111)  # untouched by 222's /untrack 1
 
 
@@ -133,7 +133,8 @@ def test_commands_acknowledge_immediately_while_a_check_holds_the_lock(
         release.set()
         await asyncio.wait_for(asyncio.gather(check_task, untrack_task), timeout=5)
         assert check.replies == ["check done"]
-        assert untrack.replies == ["Stopped tracking #1: Alpha"]
+        [reply] = untrack.replies
+        assert reply.startswith("Stopped tracking #1: Alpha\n")
 
     asyncio.run(scenario())
 

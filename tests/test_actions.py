@@ -98,7 +98,9 @@ def test_list_only_shows_own_channel(conn: sqlite3.Connection) -> None:
 
 def test_untrack(conn: sqlite3.Connection) -> None:
     db.add_product(conn, A, "https://shop/x", name="Widget")
-    assert actions.untrack(conn, A, 1) == "Stopped tracking #1: Widget"
+    assert actions.untrack(conn, A, 1) == (
+        "Stopped tracking #1: Widget\n-# Its price history is kept; `/track` the same URL to resume."
+    )
     assert actions.untrack(conn, A, 1) == "No product #1 in this channel"
 
 
@@ -216,8 +218,8 @@ def test_ids_are_per_channel_and_commands_use_them(conn: sqlite3.Connection) -> 
     # B's first product is #1 there, even though it's the third product overall.
     assert "B-one" in actions.history(conn, B, 1)
     assert actions.history(conn, B, 2) == "No product #2 in this channel"
-    assert actions.untrack(conn, A, 1) == "Stopped tracking #1: https://shop/a1"
-    assert actions.untrack(conn, B, 1) == "Stopped tracking #1: B-one"
+    assert actions.untrack(conn, A, 1).startswith("Stopped tracking #1: https://shop/a1\n")
+    assert actions.untrack(conn, B, 1).startswith("Stopped tracking #1: B-one\n")
     assert [p.url for p in db.list_products(conn, A)] == ["https://shop/a2"]  # A's #2 is untouched
 
 
@@ -334,3 +336,41 @@ def test_history_header_names_the_store(conn: sqlite3.Connection) -> None:
     assert actions.history(conn, A, 1).splitlines()[0] == (
         "**Acme: [Deluxe Widget](<https://www.acme.com/s/x>)** (last 1)"
     )
+
+
+def test_untracked_products_are_hidden_everywhere(conn: sqlite3.Connection) -> None:
+    db.add_product(conn, A, "https://shop/keep", name="Keep")
+    db.add_product(conn, A, "https://shop/gone", name="Gone")
+    actions.untrack(conn, A, 2)
+
+    assert "Gone" not in actions.list_products(conn, A)
+    assert actions.history(conn, A, 2) == "No product #2 in this channel"
+    assert actions.set_target(conn, A, 2, "10") == "No product #2 in this channel"
+    assert actions.untrack(conn, A, 2) == "No product #2 in this channel"
+    fetched: list[str] = []
+
+    def fetch(url: str, **_: object) -> str:
+        fetched.append(url)
+        return _page("5")
+
+    actions.check_now(conn, fetch, lambda drop: None, None)  # the scheduled check, all channels
+    assert fetched == ["https://shop/keep"]
+
+
+def test_tracking_an_untracked_url_restores_it(conn: sqlite3.Connection) -> None:
+    actions.track(conn, _fetch("100"), _no_notify, A, "https://shop/a1")
+    actions.track(conn, _fetch("100"), _no_notify, A, "https://shop/x", name="Widget")
+    actions.untrack(conn, A, 2)
+
+    reply = actions.track(conn, _fetch("90"), lambda drop: None, A, "https://shop/x", target=Decimal("95"))
+    assert reply.splitlines()[0] == "Tracking #2: Widget (tracked before; its ID and price history are back)"
+    product = db.find_product(conn, A, 2)
+    assert product is not None and product.target_price == Decimal("95")
+    assert [p for p, _ in db.price_history(conn, product.id)] == [Decimal("100"), Decimal("90")]
+
+
+def test_untracked_url_in_another_channel_is_tracked_fresh(conn: sqlite3.Connection) -> None:
+    actions.track(conn, _fetch(), _no_notify, A, "https://shop/x")
+    actions.untrack(conn, A, 1)
+    reply = actions.track(conn, _fetch(), _no_notify, B, "https://shop/x")
+    assert reply.splitlines()[0] == "Tracking #1: https://shop/x"  # no "tracked before"

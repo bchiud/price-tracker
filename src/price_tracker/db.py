@@ -2,6 +2,9 @@
 
 Every product belongs to the Discord channel it was tracked from (`channel_id`) and has a `number` there: the ID
 users see and type. `id` is the internal key (price history points at it).
+
+/untrack is a soft delete (`untracked_at`): untracked products are hidden from every query below except
+get_product and find_untracked, keep their number and history, and come back via restore_product.
 """
 
 import sqlite3
@@ -12,8 +15,8 @@ from pathlib import Path
 from price_tracker.models import Product
 
 # The original (version 0) schema. _MIGRATIONS bring it to the current shape (channel_id, number, render, per-channel
-# URL uniqueness, block back-off); new databases replay them too, so every database reaches the current schema by
-# the same path.
+# URL uniqueness, block back-off, soft delete); new databases replay them too, so every database reaches the current
+# schema by the same path.
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS products (
     id                  INTEGER PRIMARY KEY,
@@ -79,6 +82,8 @@ _MIGRATIONS: tuple[tuple[str, ...], ...] = (
         "ALTER TABLE products ADD COLUMN blocked_streak INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE products ADD COLUMN skips_left INTEGER NOT NULL DEFAULT 0",
     ),
+    # Soft delete: /untrack sets this instead of deleting, so price history survives and re-tracking restores it.
+    ("ALTER TABLE products ADD COLUMN untracked_at TEXT",),
 )
 
 
@@ -118,7 +123,7 @@ def add_product(
     render: bool = False,
 ) -> Product:
     # Next number in this channel. Computed inside the INSERT, so it's atomic with it (SQLite allows one writer).
-    # Numbers stay put when others are removed; only the highest is reused if it's removed and something is added.
+    # Untracked products count too, so a number is never reused (they keep theirs in case they're restored).
     with conn:
         cursor = conn.execute(
             """INSERT INTO products (channel_id, number, url, name, target_price, selector, render, created_at)
@@ -132,30 +137,69 @@ def add_product(
     return product
 
 
-def remove_product(conn: sqlite3.Connection, product_id: int) -> bool:
+def untrack_product(conn: sqlite3.Connection, product_id: int) -> bool:
+    """Soft delete. False if it was already untracked."""
     with conn:
-        cursor = conn.execute("DELETE FROM products WHERE id = ?", (product_id,))
+        cursor = conn.execute(
+            "UPDATE products SET untracked_at = ? WHERE id = ? AND untracked_at IS NULL", (_now(), product_id)
+        )
     return cursor.rowcount > 0
 
 
+def restore_product(
+    conn: sqlite3.Connection,
+    product_id: int,
+    name: str | None = None,
+    target_price: Decimal | None = None,
+    selector: str | None = None,
+    render: bool = False,
+) -> Product:
+    """Track an untracked product again. It keeps its number and history; options given replace the old ones and
+    omitted ones (None/False) keep their previous values. Alert and back-off state start fresh."""
+    with conn:
+        conn.execute(
+            """UPDATE products
+               SET untracked_at = NULL,
+                   name = COALESCE(?, name), target_price = COALESCE(?, target_price),
+                   selector = COALESCE(?, selector), render = MAX(?, render),
+                   last_notified_price = NULL, blocked_streak = 0, skips_left = 0
+               WHERE id = ?""",
+            (name, _to_text(target_price), selector, render, product_id),
+        )
+    product = get_product(conn, product_id)
+    assert product is not None
+    return product
+
+
 def list_products(conn: sqlite3.Connection, channel_id: int | None = None) -> list[Product]:
-    """One channel's products, or every channel's when `channel_id` is None (the scheduled check)."""
+    """One channel's tracked products, or every channel's when `channel_id` is None (the scheduled check)."""
     if channel_id is None:
-        rows = conn.execute("SELECT * FROM products ORDER BY id").fetchall()
+        rows = conn.execute("SELECT * FROM products WHERE untracked_at IS NULL ORDER BY id").fetchall()
     else:
-        rows = conn.execute("SELECT * FROM products WHERE channel_id = ? ORDER BY number", (channel_id,)).fetchall()
+        rows = conn.execute(
+            "SELECT * FROM products WHERE channel_id = ? AND untracked_at IS NULL ORDER BY number", (channel_id,)
+        ).fetchall()
     return [_to_product(row) for row in rows]
 
 
 def get_product(conn: sqlite3.Connection, product_id: int) -> Product | None:
-    """By internal id."""
+    """By internal id, tracked or not."""
     row = conn.execute("SELECT * FROM products WHERE id = ?", (product_id,)).fetchone()
     return _to_product(row) if row else None
 
 
 def find_product(conn: sqlite3.Connection, channel_id: int, number: int) -> Product | None:
-    """By the number shown in a channel; another channel's products are invisible."""
-    row = conn.execute("SELECT * FROM products WHERE channel_id = ? AND number = ?", (channel_id, number)).fetchone()
+    """A tracked product by the number shown in a channel; other channels' and untracked products are invisible."""
+    row = conn.execute(
+        "SELECT * FROM products WHERE channel_id = ? AND number = ? AND untracked_at IS NULL", (channel_id, number)
+    ).fetchone()
+    return _to_product(row) if row else None
+
+
+def find_untracked(conn: sqlite3.Connection, channel_id: int, url: str) -> Product | None:
+    row = conn.execute(
+        "SELECT * FROM products WHERE channel_id = ? AND url = ? AND untracked_at IS NOT NULL", (channel_id, url)
+    ).fetchone()
     return _to_product(row) if row else None
 
 
