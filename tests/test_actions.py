@@ -1,5 +1,6 @@
 import re
 import sqlite3
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import httpx
@@ -144,6 +145,33 @@ def test_check_now_summarises_each_product(conn: sqlite3.Connection) -> None:
     # Bad was never checked successfully, so it's checked first, but lines stay in /list order.
     assert lines[0] == "📉 #1 Good: 15.00"
     assert lines[1].startswith("❌ #2 Bad: fetch failed")
+
+
+def test_check_now_with_cutoff_only_checks_stale_products(conn: sqlite3.Connection) -> None:
+    # The first scheduled check after a restart: prices checked within the interval are still fresh.
+    db.add_product(conn, A, "https://shop/fresh", name="Fresh")
+    db.add_product(conn, B, "https://shop/stale", name="Stale")
+    db.add_product(conn, A, "https://shop/never", name="Never")
+    now = datetime.now(UTC)
+    for url, hours_ago in [("https://shop/fresh", 1), ("https://shop/stale", 13)]:
+        at = now - timedelta(hours=hours_ago)
+        conn.execute("UPDATE products SET last_checked_at = ? WHERE url = ?", (at.isoformat(), url))
+    fetched: list[str] = []
+
+    def fetch(url: str, **_: object) -> str:
+        fetched.append(url)
+        return _page("5")
+
+    cutoff = now - timedelta(hours=12)
+    reply = actions.check_now(conn, fetch, _no_notify, None, cutoff)
+    assert fetched == ["https://shop/never", "https://shop/stale"]
+    assert "Fresh" not in reply
+
+    fetched.clear()
+    # Restarted again right away: the run above just checked the rest, so nothing is due.
+    reply = actions.check_now(conn, fetch, _no_notify, None, cutoff)
+    assert reply == "Nothing due: every product was checked recently."
+    assert fetched == []
 
 
 def test_check_now_only_checks_own_channel(conn: sqlite3.Connection) -> None:

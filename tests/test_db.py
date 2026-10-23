@@ -1,5 +1,6 @@
 import re
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -188,6 +189,27 @@ def test_products_to_check_puts_least_recently_checked_first(conn: sqlite3.Conne
     assert [p.id for p in db.products_to_check(conn, 1)] == [never, stale, fresh]
     assert [p.id for p in db.products_to_check(conn)] == [never, stale, fresh, other]  # None = every channel
     assert [p.id for p in db.list_products(conn, 1)] == [fresh, stale, never]  # /list keeps number order
+
+
+def test_products_to_check_can_skip_recently_checked(conn: sqlite3.Connection) -> None:
+    fresh = db.add_product(conn, 1, "https://shop/fresh").id
+    stale = db.add_product(conn, 1, "https://shop/stale").id
+    edge = db.add_product(conn, 1, "https://shop/edge").id
+    never = db.add_product(conn, 1, "https://shop/never").id
+    other = db.add_product(conn, 2, "https://shop/other").id
+    checked = [
+        (fresh, "2026-10-22T12:00:00.000001+00:00"),
+        (stale, "2026-10-22T11:59:59.999999+00:00"),
+        (edge, "2026-10-22T12:00:00+00:00"),  # exactly at the cutoff: still fresh
+        (other, "2026-10-21T12:00:00+00:00"),
+    ]
+    for pid, at in checked:
+        conn.execute("UPDATE products SET last_checked_at = ? WHERE id = ?", (at, pid))
+    # A non-UTC cutoff is the same instant: 12:00 UTC.
+    cutoff = datetime(2026, 10, 22, 5, 0, tzinfo=timezone(timedelta(hours=-7)))
+
+    assert [p.id for p in db.products_to_check(conn, 1, cutoff)] == [never, stale]
+    assert [p.id for p in db.products_to_check(conn, checked_before=cutoff)] == [never, other, stale]
 
 
 def test_numbers_are_per_channel_and_stable(conn: sqlite3.Connection) -> None:

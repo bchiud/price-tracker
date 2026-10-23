@@ -182,20 +182,23 @@ def list_products(conn: sqlite3.Connection, channel_id: int | None = None) -> li
     return [_to_product(row) for row in rows]
 
 
-def products_to_check(conn: sqlite3.Connection, channel_id: int | None = None) -> list[Product]:
+def products_to_check(
+    conn: sqlite3.Connection, channel_id: int | None = None, checked_before: datetime | None = None
+) -> list[Product]:
     """Like list_products, but least recently checked first (never-checked first of all), so a run that's cut short
-    (sleep, restart) doesn't starve the same products every time. last_checked_at is UTC isoformat() text, which
-    sorts chronologically."""
-    if channel_id is None:
-        rows = conn.execute(
-            "SELECT * FROM products WHERE untracked_at IS NULL ORDER BY last_checked_at NULLS FIRST, id"
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            """SELECT * FROM products WHERE channel_id = ? AND untracked_at IS NULL
-               ORDER BY last_checked_at NULLS FIRST, id""",
-            (channel_id,),
-        ).fetchall()
+    (sleep, restart) doesn't starve the same products every time. With `checked_before`, only products last checked
+    before then (or never). last_checked_at is UTC isoformat() text, which sorts and compares chronologically."""
+    where = ["untracked_at IS NULL"]
+    params: list[object] = []
+    if channel_id is not None:
+        where.append("channel_id = ?")
+        params.append(channel_id)
+    if checked_before is not None:
+        where.append("(last_checked_at IS NULL OR last_checked_at < ?)")
+        params.append(checked_before.astimezone(UTC).isoformat())
+    rows = conn.execute(
+        f"SELECT * FROM products WHERE {' AND '.join(where)} ORDER BY last_checked_at NULLS FIRST, id", params
+    ).fetchall()
     return [_to_product(row) for row in rows]
 
 

@@ -12,6 +12,7 @@ import logging
 import random
 import sqlite3
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 
 import discord
 import httpx
@@ -160,9 +161,18 @@ def create_bot(settings: Settings, token: str) -> commands.Bot:
 
     @tasks.loop(hours=settings.check_interval_hours)
     async def scheduled_check() -> None:
+        # The loop's first run is at startup. A restart shouldn't re-check prices that are still fresh, so that run
+        # only takes products last checked over an interval ago (the base one: jitter would make the cutoff random).
+        checked_before = (
+            datetime.now(UTC) - timedelta(hours=settings.check_interval_hours)
+            if scheduled_check.current_loop == 0
+            else None
+        )
         try:
             # All channels; each product's alert still goes to its own channel.
-            summary = await run(lambda conn, fetch, notify: actions.check_now(conn, fetch, notify, None))
+            summary = await run(
+                lambda conn, fetch, notify: actions.check_now(conn, fetch, notify, None, checked_before)
+            )
             log.info("Scheduled check:\n%s", summary)
         except Exception:
             # An unhandled exception would stop the loop for good.

@@ -6,6 +6,7 @@ removes its own products, and a product's alerts go back to the channel that tra
 
 import re
 import sqlite3
+from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
 
 from price_tracker import db
@@ -18,6 +19,7 @@ from price_tracker.tracker import CheckResult, Fetcher, Notifier, check_all, che
 MAX_MESSAGE_LENGTH = 2000
 
 _NOTHING_TRACKED = "Nothing tracked in this channel yet. Use `/track <url>`."
+_NOTHING_DUE = "Nothing due: every product was checked recently."
 _LIST_FOOTER = "-# `/history <id>` for a product's link and price history"
 # "-20%", "+15 %", "12.5%"
 _PERCENT = re.compile(r"([+-]?)\s*(\d+(?:\.\d+)?)\s*%")
@@ -155,11 +157,18 @@ def parse_target(raw: str, current: Decimal | None) -> tuple[Decimal, Decimal | 
     return price, None
 
 
-def check_now(conn: sqlite3.Connection, fetch: Fetcher, notify: Notifier, channel_id: int | None) -> str:
-    """Check this channel's products; None checks every channel (used by the scheduled check)."""
-    results = check_all(conn, fetch, notify, channel_id)
+def check_now(
+    conn: sqlite3.Connection,
+    fetch: Fetcher,
+    notify: Notifier,
+    channel_id: int | None,
+    checked_before: datetime | None = None,
+) -> str:
+    """Check this channel's products; None checks every channel (used by the scheduled check). With
+    `checked_before`, only products last checked before then (the first scheduled check after a restart)."""
+    results = check_all(conn, fetch, notify, channel_id, checked_before=checked_before)
     if not results:
-        return _NOTHING_TRACKED
+        return _NOTHING_DUE if checked_before is not None else _NOTHING_TRACKED
     # Checked stalest-first; report in the order /list shows.
     results.sort(key=lambda r: (r.product.channel_id, r.product.number))
     return _fit([_result_line(r) for r in results], keep=0)

@@ -111,6 +111,9 @@ Example: a Shopify store whose Sales Genius discount app draws the sale price:
 
 **Check order.** Each check goes least recently checked first; never-checked products go first of all. So a check that's cut short (the Mac sleeps, the bot restarts) starts the next one with the products it missed, instead of repeating the same ones. `/check` still lists results by ID.
 
+**On startup.** The first scheduled check runs as soon as the bot starts, but it only checks products last checked more than `CHECK_INTERVAL_HOURS` ago (or never). So restarting the bot doesn't re-fetch prices that are still fresh. Later checks, and `/check`, check everything.
+- A failed check doesn't count as checked, so a product that keeps failing is still retried on every startup.
+
 **Avoiding bot blocks.** There's no guarantee, but the tracker keeps a low profile:
 - **Low volume:** one request per product per check, one at a time.
 - **Chrome fingerprint:** plain fetches imitate Chrome, and the browser is only used when needed.

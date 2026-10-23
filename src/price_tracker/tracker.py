@@ -21,6 +21,7 @@ import sqlite3
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from datetime import datetime
 from decimal import Decimal
 from typing import Protocol, runtime_checkable
 
@@ -215,11 +216,13 @@ def check_all(
     notify: Notifier,
     channel_id: int | None = None,
     pacer: Pacer | None = None,
+    checked_before: datetime | None = None,
 ) -> list[CheckResult]:
-    """Check every product, or only one channel's when `channel_id` is given. Least recently checked go first."""
+    """Check every product, or only one channel's when `channel_id` is given. Least recently checked go first.
+    With `checked_before`, skip products last checked at or after then (their price is still fresh)."""
     pacer = pacer or Pacer()
     results = []
-    for product in db.products_to_check(conn, channel_id):
+    for product in db.products_to_check(conn, channel_id, checked_before):
         if product.skips_left > 0:
             db.use_skip(conn, product.id)
             results.append(CheckResult(product, skipped=True))
