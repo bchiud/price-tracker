@@ -191,6 +191,37 @@ def test_check_now_only_checks_own_channel(conn: sqlite3.Connection) -> None:
     assert fetched == ["https://shop/b", "https://shop/a"]  # b was never checked, so it goes first
 
 
+def test_check_one_checks_only_that_product(conn: sqlite3.Connection) -> None:
+    db.add_product(conn, A, "https://shop/a1", name="First")
+    db.add_product(conn, A, "https://shop/a2", name="Second")
+    db.add_product(conn, B, "https://shop/b1", name="Other")
+    fetched: list[str] = []
+
+    def fetch(url: str, **_: object) -> str:
+        fetched.append(url)
+        return _page(price)
+
+    price = "20"
+    assert actions.check_one(conn, fetch, _no_notify, A, 2) == "✅ #2 Second: 20.00"
+    assert fetched == ["https://shop/a2"]
+    # Recorded like any check: it's the baseline the next one compares against.
+    sent: list[PriceDrop] = []
+    price = "15"
+    assert actions.check_one(conn, fetch, sent.append, A, 2) == "📉 #2 Second: 15.00"
+    assert [d.new_price for d in sent] == [Decimal("15")]
+    assert actions.check_one(conn, fetch, _no_notify, B, 2) == "No product #2 in this channel"
+    assert fetched == ["https://shop/a2", "https://shop/a2"]
+
+
+def test_check_one_ignores_block_back_off(conn: sqlite3.Connection) -> None:
+    # Asked for explicitly, so it fetches now; only the scheduled check and the full /check wait out a block.
+    db.add_product(conn, A, "https://www.acme.com/s/x", name="Widget")
+    conn.execute("UPDATE products SET blocked_streak = 2, skips_left = 2")
+    assert actions.check_one(conn, _fetch(), _no_notify, A, 1) == "✅ #1 Widget: 63.00"
+    product = db.find_product(conn, A, 1)
+    assert product is not None and (product.blocked_streak, product.skips_left) == (0, 0)  # success resets it
+
+
 def test_long_list_fits_discord_limit_and_keeps_code_block(conn: sqlite3.Connection) -> None:
     for i in range(100):
         db.add_product(conn, A, f"https://shop/{i}", name="x" * 40)
@@ -376,6 +407,7 @@ def test_untracked_products_are_hidden_everywhere(conn: sqlite3.Connection) -> N
     assert actions.history(conn, A, 2) == "No product #2 in this channel"
     assert actions.set_target(conn, A, 2, "10") == "No product #2 in this channel"
     assert actions.untrack(conn, A, 2) == "No product #2 in this channel"
+    assert actions.check_one(conn, _fetch(), _no_notify, A, 2) == "No product #2 in this channel"
     fetched: list[str] = []
 
     def fetch(url: str, **_: object) -> str:

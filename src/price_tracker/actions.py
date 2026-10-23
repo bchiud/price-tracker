@@ -174,6 +174,14 @@ def check_now(
     return _fit([_result_line(r) for r in results], keep=0)
 
 
+def check_one(conn: sqlite3.Connection, fetch: Fetcher, notify: Notifier, channel_id: int, number: int) -> str:
+    """Check one of this channel's products now. Asked for explicitly, so it ignores a block back-off."""
+    product = db.find_product(conn, channel_id, number)
+    if product is None:
+        return _no_product(number)
+    return _result_line(check_product(conn, product, fetch, notify))
+
+
 def _no_product(number: int) -> str:
     return f"No product #{number} in this channel"
 

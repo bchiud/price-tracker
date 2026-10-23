@@ -29,7 +29,7 @@ All commands are **owner-only**: only the account that owns the bot application 
 | `/history id` | Store and product link (`Acme: Deluxe Widget`), then the last 20 prices |
 | `/target id [price]` | Set the target: an amount (`150`) or a percentage below the current price (`-20%`). Leave `price` empty to clear it |
 | `/untrack id` | Stop tracking. Its price history is kept, and `/track`ing the same URL in the channel restores it |
-| `/check` | Check this channel's products now |
+| `/check [id]` | Check this channel's products now, or only product `id`. Checking one product ignores a block back-off |
 
 **IDs are per channel:** each channel numbers its products 1, 2, 3… in the order they were tracked. A product keeps its number when others are removed, so `/untrack 2` never hits a product that moved. Numbers are never reused.
 
@@ -111,7 +111,7 @@ Example: a Shopify store whose Sales Genius discount app draws the sale price:
 
 **Check order.** Each check goes least recently checked first; never-checked products go first of all. So a check that's cut short (the Mac sleeps, the bot restarts) starts the next one with the products it missed, instead of repeating the same ones. `/check` still lists results by ID.
 
-**On startup.** The first scheduled check runs as soon as the bot starts, but it only checks products last checked more than `CHECK_INTERVAL_HOURS` ago (or never). So restarting the bot doesn't re-fetch prices that are still fresh. Later checks, and `/check`, check everything.
+**On startup.** The first scheduled check runs as soon as the bot starts, but it only checks products last checked more than `CHECK_INTERVAL_HOURS` ago (or never). So restarting the bot doesn't re-fetch prices that are still fresh. Later checks, and `/check` without an ID, check everything.
 - A failed check doesn't count as checked, so a product that keeps failing is still retried on every startup.
 
 **Avoiding bot blocks.** There's no guarantee, but the tracker keeps a low profile:

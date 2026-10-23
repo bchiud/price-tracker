@@ -137,11 +137,20 @@ def create_bot(settings: Settings, token: str) -> commands.Bot:
         channel_id = _channel_id(interaction)
         await respond(interaction, lambda conn, *_: actions.set_target(conn, channel_id, number, price))
 
-    @bot.tree.command(name="check", description="Check this channel's prices now")
+    @bot.tree.command(name="check", description="Check this channel's prices now, or one product's")
     @app_commands.check(owner_only)
-    async def check(interaction: discord.Interaction) -> None:
+    @app_commands.rename(number="id")
+    @app_commands.describe(number="ID from /list; leave empty to check every product")
+    async def check(interaction: discord.Interaction, number: int | None = None) -> None:
         channel_id = _channel_id(interaction)
-        await respond(interaction, lambda conn, fetch, notify: actions.check_now(conn, fetch, notify, channel_id))
+        await respond(
+            interaction,
+            lambda conn, fetch, notify: (
+                actions.check_now(conn, fetch, notify, channel_id)
+                if number is None
+                else actions.check_one(conn, fetch, notify, channel_id, number)
+            ),
+        )
 
     @bot.tree.error
     async def on_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:

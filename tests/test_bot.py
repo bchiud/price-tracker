@@ -139,6 +139,34 @@ def test_commands_acknowledge_immediately_while_a_check_holds_the_lock(
     asyncio.run(scenario())
 
 
+def test_check_id_option_is_optional() -> None:
+    [param] = _commands()["check"].parameters
+    assert (param.display_name, param.required) == ("id", False)
+
+
+def test_check_without_id_checks_the_channel_and_with_id_one_product(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = Settings(db_path=tmp_path / "bot.db", discord_bot_token=None, discord_guild_id=None)
+    calls: list[tuple[str, int, int | None]] = []
+
+    def check_now(conn: object, fetch: object, notify: object, channel_id: int) -> str:
+        calls.append(("all", channel_id, None))
+        return "all checked"
+
+    def check_one(conn: object, fetch: object, notify: object, channel_id: int, number: int) -> str:
+        calls.append(("one", channel_id, number))
+        return "one checked"
+
+    monkeypatch.setattr(actions, "check_now", check_now)
+    monkeypatch.setattr(actions, "check_one", check_one)
+    bot = create_bot(settings, token="unused")
+
+    assert _call(bot, "check", 111) == "all checked"
+    assert _call(bot, "check", 111, number=3) == "one checked"
+    assert calls == [("all", 111, None), ("one", 111, 3)]
+
+
 def test_jittered_hours_stays_within_ten_percent() -> None:
     rng = random.Random(1)
     samples = [jittered_hours(12, rng) for _ in range(200)]
